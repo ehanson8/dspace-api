@@ -1,9 +1,11 @@
+import ast
 import csv
 import os
 import re
 import yaml
 
 import smart_open
+
 
 S3_BUCKET_REGEX = re.compile(r"^([^\/]*)")
 S3_PREFIX_REGEX = re.compile(r"(?<=\/)(.*)")
@@ -47,14 +49,15 @@ def get_files_from_s3(
     """
     files = {}
     s3_path = s3_path.removeprefix("s3://")
-    operation_parameters = {"Bucket": parse_value_from_text(s3_path, S3_BUCKET_REGEX)}
+    bucket = parse_value_from_text(s3_path, S3_BUCKET_REGEX)
+    operation_parameters = {"Bucket": bucket}
     if prefix := parse_value_from_text(s3_path, S3_PREFIX_REGEX):
         operation_parameters.update({"Prefix": prefix})
 
     paginator = s3_client.get_paginator("list_objects_v2")
     for page in paginator.paginate(**operation_parameters):
         for file in page["Contents"]:
-            file_path = file["Key"]
+            file_path = f"s3://{bucket}/{file['Key']}"
             file_name = file_path.split("/")[-1]
             if bitstream_folders:
                 # if the object is not stored in any of the folders specified
@@ -62,8 +65,8 @@ def get_files_from_s3(
                 if not [folder for folder in bitstream_folders if folder in file_path]:
                     continue
             item_identifier = parse_value_from_text(file_name, id_regex)
-            files.setdefault(item_identifier, []).append(file["Key"])
-    return files
+            files.setdefault(item_identifier, []).append(file_path)
+    return dict(sorted(files.items()))
 
 
 def parse_value_from_text(
@@ -94,7 +97,7 @@ def create_metadata_id_list(metadata_csv):
     with open(metadata_csv) as csvfile:
         reader = csv.DictReader(csvfile)
         metadata_ids = [
-            row["file_identifier"] for row in reader if row["file_identifier"] != ""
+            row["item_identifier"] for row in reader if row["item_identifier"] != ""
         ]
     return metadata_ids
 
@@ -131,6 +134,6 @@ def update_metadata_csv(metadata_csv, output_directory, metadata_matches, files_
             writer = csv.DictWriter(updated_csv, fieldnames=fieldnames)
             writer.writeheader()
             for row in reader:
-                if row["file_identifier"] in metadata_matches:
-                    row["bitstreams"] = files_dict[row["file_identifier"]]
+                if row["item_identifier"] in metadata_matches:
+                    row["bitstreams"] = files_dict[row["item_identifier"]]
                     writer.writerow(row)

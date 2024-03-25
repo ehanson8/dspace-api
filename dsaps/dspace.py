@@ -1,14 +1,15 @@
-import operator
-from functools import partial
+from __future__ import annotations
 
+import ast
 import attr
+import operator
 import requests
-import smart_open
 import structlog
+
+import smart_open
 
 from attrs import field, define
 
-Group = partial(attr.ib, default=[])
 
 logger = structlog.get_logger()
 op = operator.attrgetter("name")
@@ -20,7 +21,7 @@ class DSpaceClient:
         self.url = url.rstrip("/")
         self.cookies = None
         self.header = header
-        logger.info("Initializing client")
+        logger.info("Initializing DSpace client")
 
     def authenticate(self, email, password):
         """Authenticate user to DSpace API."""
@@ -72,10 +73,10 @@ class DSpaceClient:
     def get_uuid_from_handle(self, handle):
         """Get UUID for an object based on its handle."""
         hdl_endpoint = f"{self.url}/handle/{handle}"
-        rec_obj = requests.get(
+        record = requests.get(
             hdl_endpoint, headers=self.header, cookies=self.cookies, timeout=30
         ).json()
-        return rec_obj["uuid"]
+        return record["uuid"]
 
     def get_record(self, uuid, record_type):
         """Get an individual record of a specified type."""
@@ -84,21 +85,22 @@ class DSpaceClient:
             url, headers=self.header, cookies=self.cookies, timeout=30
         ).json()
         if record_type == "items":
-            rec_obj = self._populate_class_instance(DSpaceItem, record)
+            dspace_object = self._populate_class_instance(Item, record)
         elif record_type == "communities":
-            rec_obj = self._populate_class_instance(DSpaceCommunity, record)
+            dspace_object = self._populate_class_instance(Community, record)
         elif record_type == "collections":
-            rec_obj = self._populate_class_instance(DSpaceCollection, record)
+            dspace_object = self._populate_class_instance(Collection, record)
         else:
             logger.info("Invalid record type.")
             exit()
-        return rec_obj
+        return dspace_object
 
     def post_bitstream(self, item_uuid, bitstream):
         """Post a bitstream to a specified item and return the bitstream
         ID."""
-        endpoint = f"{self.url}/items/{item_uuid}" f"/bitstreams?name={bitstream.name}"
+        endpoint = f"{self.url}/items/{item_uuid}/bitstreams?name={bitstream.name}"
         header_upload = {"accept": "application/json"}
+        logger.info(endpoint)
         with smart_open.open(bitstream.file_path, "rb") as data:
             post_response = requests.post(
                 endpoint,
@@ -113,7 +115,7 @@ class DSpaceClient:
             bitstream_uuid = response["uuid"]
             return bitstream_uuid
 
-    def post_coll_to_comm(self, comm_handle, coll_name):
+    def post_collection_to_community(self, comm_handle, coll_name):
         """Post a collection to a specified community."""
         hdl_endpoint = f"{self.url}/handle/{comm_handle}"
         community = requests.get(
@@ -150,24 +152,23 @@ class DSpaceClient:
         item_handle = post_response["handle"]
         return item_uuid, item_handle
 
-    def _populate_class_instance(self, class_type, rec_obj):
+    def _populate_class_instance(self, class_type, record):
         """Populate class instance with data from record."""
         fields = [op(field) for field in attr.fields(class_type)]
-        kwargs = {k: v for k, v in rec_obj.items() if k in fields}
-        kwargs["objtype"] = rec_obj["type"]
-        if class_type == DSpaceCommunity:
-            collections = self._build_uuid_list(rec_obj, kwargs, "collections")
-            rec_obj["collections"] = collections
-        elif class_type == DSpaceCollection:
-            items = self._build_uuid_list(rec_obj, "items")
-            rec_obj["items"] = items
-        rec_obj = class_type(**kwargs)
-        return rec_obj
+        kwargs = {k: v for k, v in record.items() if k in fields}
+        kwargs["type"] = record["type"]
+        if class_type == Community:
+            collections = self._build_uuid_list(record, kwargs, "collections")
+            kwargs["collections"] = collections
+        elif class_type == Collection:
+            items = self._build_uuid_list(record, "items")
+            kwargs["items"] = items
+        return class_type(**kwargs)
 
-    def _build_uuid_list(self, rec_obj, children):
+    def _build_uuid_list(self, record, children):
         """Build list of the uuids of the object's children."""
         child_list = []
-        for child in rec_obj[children]:
+        for child in record[children]:
             child_list.append(child["uuid"])
         return child_list
 
@@ -186,82 +187,95 @@ class MetadataEntry:
 
 
 @define
-class DSpaceObject:
+class Object:
     uuid = field(default=None)
     name = field(default=None)
     handle = field(default=None)
     link = field(default=None)
-    objtype = field(default=None)
+    type = field(default=None)
 
 
 @define
-class DSpaceCollection(DSpaceObject):
-    items = field(factory=list)
-
-    def post_items(self, client):
-        """Post items to collection."""
-        for item in self.items:
-            logger.info(f"Posting item: {item}")
-            item_uuid, item_handle = client.post_item_to_collection(self.uuid, item)
-            item.uuid = item_uuid
-            item.handle = item_handle
-            logger.info(f"Item posted: {item_uuid}")
-            for bitstream in item.bitstreams:
-                bitstream_uuid = client.post_bitstream(item_uuid, bitstream)
-                bitstream.uuid = bitstream_uuid
-                logger.info(f"Bitstream posted: {bitstream_uuid}")
-            yield item
+class Item(Object):
+    metadata = field(factory=list)
+    bitstreams = field(factory=list)
+    item_identifier = field(default=None)
+    source_system_identifier = field(default=None)
 
     @classmethod
-    def create_metadata_for_items_from_csv(cls, csv_reader, field_map):
+    def create(cls, record, mapping) -> Item:
+        return cls(
+            metadata=cls.get_metadata(record, mapping),
+            bitstreams=cls.get_bitstreams(record),
+            **cls.get_ids(record, mapping),
+        )
+
+    @classmethod
+    def get_bitstreams(cls, record) -> list:
+        if _bitstreams := record.get("bitstreams"):
+            bitstreams = []
+            for file_path in ast.literal_eval(_bitstreams):
+                file_name = file_path.split("/")[-1]
+                bitstreams.append(Bitstream(name=file_name, file_path=file_path))
+            return bitstreams
+
+    @classmethod
+    def get_ids(cls, record, mapping) -> dict:
+        ids = {}
+        if item_id_mapping := mapping.get("item_identifier"):
+            ids["item_identifier"] = record.get(item_id_mapping["csv_field_name"])
+        if source_system_id_mapping := mapping.get("source_system_identifier"):
+            ids["source_system_identifier"] = record.get(
+                source_system_id_mapping["csv_field_name"]
+            )
+        return ids
+
+    @classmethod
+    def get_metadata(cls, record, mapping) -> list:
+        """Create metadata for an item based on a CSV row and a JSON mapping field map."""
+        metadata = []
+        for field_name, field_mapping in mapping.items():
+            if field_name not in ["item_identifier", "source_system_identifier"]:
+
+                field_value = record[field_mapping["csv_field_name"]]
+
+                if field_value:
+                    delimiter = field_mapping["delimiter"]
+                    language = field_mapping["language"]
+                    if delimiter:
+                        metadata.extend(
+                            [
+                                MetadataEntry(
+                                    key=field_name,
+                                    value=value,
+                                    language=language,
+                                )
+                                for value in field_value.split(delimiter)
+                            ]
+                        )
+                    else:
+                        metadata.append(
+                            MetadataEntry(
+                                key=field_name,
+                                value=field_value,
+                                language=language,
+                            )
+                        )
+        return metadata
+
+
+@define
+class Collection(Object):
+    items = field(factory=list)
+
+    @classmethod
+    def add_items(cls, csv_reader, field_map) -> Collection:
         """Create metadata for the collection's items based on a CSV and a JSON mapping
         field map."""
-        items = [DSpaceItem.metadata_from_csv_row(row, field_map) for row in csv_reader]
+        items = [Item.create(row, field_map) for row in csv_reader]
         return cls(items=items)
 
 
 @define
-class DSpaceCommunity(DSpaceObject):
+class Community(Object):
     collections = field(default=None)
-
-
-@define
-class DSpaceItem(DSpaceObject):
-    metadata = field(factory=list)
-    bitstreams = field(factory=list)
-    file_identifier = field(default=None)
-    source_system_identifier = field(default=None)
-
-    def bitstreams_in_directory(self, directory, s3_client, file_type=None):
-        """Create a list of bitstreams from the specified directory and sort the list."""
-        pass
-
-    @classmethod
-    def metadata_from_csv_row(cls, row, field_map):
-        """Create metadata for an item based on a CSV row and a JSON mapping field map."""
-        metadata = []
-        for f in field_map:
-            field = row[field_map[f]["csv_field_name"]]
-            if field != "":
-                if f == "file_identifier":
-                    file_identifier = field
-                    continue  # file_identifier is not included in DSpace metadata
-                if f == "source_system_identifier":
-                    # source_system_identifier = field
-                    continue  # source_system_identifier is not included in DSpace
-                delimiter = field_map[f]["delimiter"]
-                language = field_map[f]["language"]
-                if delimiter:
-                    metadata.extend(
-                        [
-                            MetadataEntry(key=f, value=v, language=language)
-                            for v in field.split(delimiter)
-                        ]
-                    )
-                else:
-                    metadata.append(MetadataEntry(key=f, value=field, language=language))
-        return cls(
-            metadata=metadata,
-            file_identifier=file_identifier,
-            # source_system_identifier=source_system_identifier,
-        )

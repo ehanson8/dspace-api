@@ -16,13 +16,13 @@ Note: Previously, the repository comprised of self-contained scripts that could 
 ### Reconciling files with metadata CSV
 
 ```bash
-pipenv run dsaps --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD reconcile -m <metadata-csv> -o /output -d <content-directory> -t <file-type>
+pipenv run dsaps --config-file $CONFIG_FILE --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD reconcile -m <metadata-csv> -o /output -d <content-directory>
 ```
 
 ### Creating a new collection within a DSpace community
 
 ```bash
-pipenv run dsaps --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD newcollection -c <community-handle> -n <collection-name>
+pipenv run dsaps --config-file $CONFIG_FILE --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD newcollection -c <community-handle> -n <collection-name>
 ```
 
 ### Adding items to a DSpace collection
@@ -30,12 +30,19 @@ pipenv run dsaps --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD newcolle
 The command below shows `newcollection` and `additems` being run in conjunction with each other. Note that the invocation must call `newcollection` first. In practice, this is the command that is usually run:
 
 ```bash
-pipenv run dsaps --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD newcollection -c <community-handle> -n <collection-name> additems -m <metadata-csv> -f config/<field-mapping>.json -d <s3-bucket-name> -t <file-type> 
+pipenv run dsaps --config-file $CONFIG_FILE --url $DSPACE_URL -e $DSPACE_EMAIL -p $DSPACE_PASSWORD newcollection -c <community-handle> -n <collection-name> additems -m <metadata-csv> -d <s3-bucket-path> 
 ``` 
 
 ## Environment 
 
 ### Required
+
+```shell
+# The file path to the source configuration JSON with settings for bitstream retrieval and field mappings.
+CONFIG_FILE=
+```
+
+### Optional
 
 ```shell
 # The url for the DSpace REST API
@@ -58,14 +65,16 @@ All CLI commands can be run with `pipenv run <COMMAND>`.
 Usage: -c [OPTIONS] COMMAND1 [ARGS]... [COMMAND2 [ARGS]...]...
 
 Options:
+  --config-file TEXT   File path to source configuration JSON with settings
+                       for bitstream retrieval and field mappings.  [required]
   --url TEXT           The url for the DSpace REST API. Defaults to env var
-                       DSPACE_URL if not set.  [required]
+                       DSPACE_URL if not set.
   -e, --email TEXT     The email associated with the DSpace user account used
                        for authentication. Defaults to env var DSPACE_EMAIL if
-                       not set.  [required]
+                       not set.
   -p, --password TEXT  The password associated with the DSpace user account
                        used for authentication. Defaults to env var
-                       DSPACE_PASSWORD if not set.  [required]
+                       DSPACE_PASSWORD if not set.
   --help               Show this message and exit.
 
 Commands:
@@ -87,10 +96,10 @@ Usage: -c reconcile [OPTIONS]
       file with a corresponding file in the content directory.
 
       * no_files.csv: File identifiers for entries in metadata CSV file
-      without a corresponding file in the content directory.
+      without a     corresponding file in the content directory.
 
       * no_metadata.csv: File identifiers for files in the content directory
-      without a corresponding entry in the metadata CSV file.
+      without a     corresponding entry in the metadata CSV file.
 
       * updated-<metadata-csv>.csv: Entries from the metadata CSV file with a
       corresponding file in the content directory.
@@ -101,8 +110,6 @@ Options:
   -o, --output-directory TEXT   The filepath where output files are written.
   -d, --content-directory TEXT  The name of the S3 bucket containing files for
                                 DSpace uploads.  [required]
-  -t, --file-type TEXT          The file type for DSpace uploads (i.e., the
-                                file extension, excluding the dot).
   --help                        Show this message and exit.
 ```
 
@@ -127,20 +134,18 @@ Usage: -c additems [OPTIONS]
 
   Add items to a DSpace collection.
 
-  The method relies on a CSV file with metadata for uploads, a JSON document
-  that maps metadata to a DSpace schema, and a directory containing the files
-  to be uploaded.
+  The updated metadata CSV file from running 'reconcile' is used for this
+  process. The method will first add an item to the specified DSpace
+  collection. The bitstreams (i.e., files) associated with the item are read
+  from the metadata CSV file, and uploaded to the newly created item on
+  DSpace.
 
 Options:
-  -m, --metadata-csv FILE       The filepath to a CSV file containing metadata
-                                for Dspace uploads.  [required]
-  -f, --field-map FILE          The filepath to a JSON document that maps
-                                columns in the metadata CSV file to a DSpace
-                                schema.  [required]
+  -m, --metadata-csv FILE       File path to a CSV file describing the
+                                metadata and bitstreams for DSpace uploads.
+                                [required]
   -d, --content-directory TEXT  The name of the S3 bucket containing files for
                                 DSpace uploads.  [required]
-  -t, --file-type TEXT          The file type for DSpace uploads (i.e., the
-                                file extension, excluding the dot).
   -r, --ingest-report           Create ingest report for updating other
                                 systems.
   -c, --collection-handle TEXT  The handle identifying a DSpace collection

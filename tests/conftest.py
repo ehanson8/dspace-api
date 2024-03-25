@@ -35,6 +35,13 @@ def source_metadata_csv():
         yield reader
 
 
+@pytest.fixture
+def source_metadata_csv_with_bitstreams():
+    with open("tests/fixtures/updated-source_metadata.csv") as file:
+        reader = csv.DictReader(file)
+        yield reader
+
+
 @pytest.fixture()
 def dspace_client():
     dspace_client = dspace.DSpaceClient("mock://example.com/")
