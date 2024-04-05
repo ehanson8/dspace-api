@@ -1,13 +1,11 @@
 {
     "settings": {
-        "bitstream_folders": [
-            "objects"
-        ],
-        "id_regex": ".*-(.*?-.*)\\..*$"
+        "bitstream_folders": [],
+        "id_regex": "_(.*)_"
     },
     "mapping": {
-        "file_identifier": {
-            "csv_field_name": "file_identifier",
+        "item_identifier": {
+            "csv_field_name": "item_identifier",
             "language": null,
             "delimiter": ""
         },
@@ -16,30 +14,10 @@
             "language": "en_US",
             "delimiter": ""
         },
-        "source_system_identifier": {
-            "csv_field_name": "uri",
-            "language": null,
-            "delimiter": ""
-        },
         "dc.contributor.author": {
             "csv_field_name": "author",
             "language": null,
             "delimiter": "|"
-        },
-        "dc.description": {
-            "csv_field_name": "description",
-            "language": "en_US",
-            "delimiter": ""
-        },
-        "dc.rights": {
-            "csv_field_name": "rights_statement",
-            "language": "en_US",
-            "delimiter": ""
-        },
-        "dc.rights.uri": {
-            "csv_field_name": "rights_uri",
-            "language": null,
-            "delimiter": ""
         }
     }
 }

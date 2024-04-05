@@ -1,13 +1,16 @@
 import csv
 import json
+import yaml
 
 import boto3
 import pytest
 import requests_mock
+import smart_open
+
 from click.testing import CliRunner
 from moto import mock_aws
 
-from dsaps import models
+from dsaps import dspace
 
 
 # Env fixtures
@@ -17,6 +20,40 @@ def _test_environment(monkeypatch):
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.setenv("AWS_SECURITY_TOKEN", "testing")
     monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
+
+
+@pytest.fixture
+def source_config():
+    with smart_open.open("tests/fixtures/source_config.json", "r") as file:
+        return yaml.safe_load(file)
+
+
+@pytest.fixture
+def source_metadata_csv():
+    with open("tests/fixtures/source_metadata.csv") as file:
+        reader = csv.DictReader(file)
+        yield reader
+
+
+@pytest.fixture
+def source_metadata_csv_with_bitstreams():
+    with open("tests/fixtures/updated-source_metadata.csv") as file:
+        reader = csv.DictReader(file)
+        yield reader
+
+
+@pytest.fixture()
+def dspace_client():
+    dspace_client = dspace.DSpaceClient("mock://example.com/")
+    dspace_client.header = {}
+    dspace_client.cookies = {}
+    dspace_client.user_full_name = ""
+    return dspace_client
+
+
+@pytest.fixture()
+def s3_client():
+    return boto3.client("s3", region_name="us-east-1")
 
 
 @pytest.fixture
@@ -57,60 +94,19 @@ def mocked_s3_bucket():
         yield
 
 
-@pytest.fixture()
-def mocked_s3():
-    with mock_aws():
-        s3_instance = boto3.client("s3", region_name="us-east-1")
-        s3_instance.create_bucket(Bucket="test-bucket")
-        s3_instance.put_object(
-            Body="",
-            Bucket="test-bucket",
-            Key="test_01.pdf",
-        )
-        s3_instance.put_object(
-            Body="",
-            Bucket="test-bucket",
-            Key="test_02.pdf",
-        )
-        s3_instance.put_object(
-            Body="",
-            Bucket="test-bucket",
-            Key="best_01.pdf",
-        )
-        s3_instance.put_object(
-            Body="",
-            Bucket="test-bucket",
-            Key="test_01.jpg",
-        )
-        yield s3_instance
-
-
-@pytest.fixture()
-def s3_client():
-    return boto3.client("s3", region_name="us-east-1")
-
-
-@pytest.fixture()
-def client():
-    client = models.Client("mock://example.com/")
-    client.header = {}
-    client.cookies = {}
-    client.user_full_name = ""
-    return client
-
-
-@pytest.fixture()
-def aspace_delimited_csv():
-    with open("tests/fixtures/aspace_metadata_delimited.csv") as f:
-        reader = csv.DictReader(f)
-        yield reader
-
-
-@pytest.fixture()
-def aspace_mapping():
-    with open("config/aspace_mapping.json") as f:
-        mapping = json.load(f)
-        yield mapping
+@pytest.fixture
+def mocked_s3_bucket_bitstreams():
+    return {
+        "001": ["s3://mocked-bucket/one-to-one/aaaa_001_01.pdf"],
+        "002": ["s3://mocked-bucket/one-to-one/aaaa_002_01.pdf"],
+        "003": [
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.jpg",
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.pdf",
+            "s3://mocked-bucket/many-to-one/bbbb_003_02.pdf",
+        ],
+        "004": ["s3://mocked-bucket/many-to-one/bbbb_004_01.pdf"],
+        "005": ["s3://mocked-bucket/nested/prefix/objects/include_005_01.pdf"],
+    }
 
 
 @pytest.fixture()
@@ -127,34 +123,93 @@ def runner():
 
 @pytest.fixture(autouse=True)
 def web_mock():
-    with requests_mock.Mocker() as m:
+    with requests_mock.Mocker() as mocked_request:
+        # DSpace authentication
         cookies = {"JSESSIONID": "11111111"}
-        m.post("mock://example.com/login", cookies=cookies)
+        mocked_request.post("mock://example.com/login", cookies=cookies)
         user_json = {"fullname": "User Name"}
-        m.get("mock://example.com/status", json=user_json)
-        rec_json = {"metadata": {"title": "Sample title"}, "type": "item"}
-        m.get("mock://example.com/items/123?expand=all", json=rec_json)
-        results_json1 = {"items": [{"link": "1234"}]}
-        results_json2 = {"items": []}
-        m.get(
-            "mock://example.com/filtered-items?",
-            [{"json": results_json1}, {"json": results_json2}],
+        mocked_request.get("mock://example.com/status", json=user_json)
+
+        # get - retrieve item
+        item_get_url = "mock://example.com/items/123?expand=all"
+        item_get_response = {"metadata": {"title": "Sample title"}, "type": "item"}
+        mocked_request.get(item_get_url, json=item_get_response)
+
+        # get - retrieve uuid from handle
+        uuid_get_url = "mock://example.com/handle/111.1111"
+        uuid_get_response = {"uuid": "a1b2"}
+        mocked_request.get(uuid_get_url, json=uuid_get_response)
+
+        # get - retrieve uuid from handle (for test_cli.test_additems )
+        uuid_get_url_2 = "mock://example.com/handle/333.3333"
+        uuid_get_response_2 = {"uuid": "k1l2"}
+        mocked_request.get(uuid_get_url_2, json=uuid_get_response_2)
+
+        # get - retrieve filtered set of items
+        filtered_items_get_url = "mock://example.com/filtered-items?"
+        filtered_items_get_response = [
+            {"json": {"items": [{"link": "1234"}]}},
+            {"json": {"items": []}},
+        ]
+        mocked_request.get(filtered_items_get_url, filtered_items_get_response)
+
+        # post - add collection to community
+        collection_post_url = "mock://example.com/communities/a1b2/collections"
+        collection_post_response = {"uuid": "c3d4"}
+        mocked_request.post(collection_post_url, json=collection_post_response)
+
+        # post - add item to collection
+        item_post_url = "mock://example.com/collections/c3d4/items"
+        item_post_response = {"uuid": "e5f6", "handle": "222.2222"}
+        mocked_request.post(item_post_url, json=item_post_response)
+
+        # post - add item to collection (for test_cli.test_additems)
+        item_post_url_2 = "mock://example.com/collections/k1l2/items"
+        item_post_response_2 = {"uuid": "e5f6", "handle": "222.2222"}
+        mocked_request.post(item_post_url_2, json=item_post_response_2)
+
+        # post - add bitstream to item
+        bitstream_post_url = (
+            "mock://example.com/items/e5f6/bitstreams?name=aaaa_001_01.pdf"
         )
-        rec_json = {"uuid": "a1b2"}
-        m.get("mock://example.com/handle/111.1111", json=rec_json)
-        coll_json = {"uuid": "c3d4"}
-        m.post("mock://example.com/communities/a1b2/collections", json=coll_json)
-        item_json = {"uuid": "e5f6", "handle": "222.2222"}
-        m.post("mock://example.com/collections/c3d4/items", json=item_json)
-        b_json_1 = {"uuid": "g7h8"}
-        url_1 = "mock://example.com/items/e5f6/bitstreams?name=test_01.pdf"
-        m.post(url_1, json=b_json_1)
-        b_json_2 = {"uuid": "i9j0"}
-        url_2 = "mock://example.com/items/e5f6/bitstreams?name=test_02.pdf"
-        m.post(url_2, json=b_json_2)
-        m.get("mock://remoteserver.com/files/test_01.pdf", content=b"Sample")
-        coll_json = {"uuid": "k1l2"}
-        m.get("mock://example.com/handle/333.3333", json=coll_json)
-        item_json_2 = {"uuid": "e5f6", "handle": "222.2222"}
-        m.post("mock://example.com/collections/k1l2/items", json=item_json_2)
-        yield m
+        bitstream_post_response = {"uuid": "g7h8"}
+        mocked_request.post(bitstream_post_url, json=bitstream_post_response)
+
+        bitstream_post_url_2 = (
+            "mock://example.com/items/e5f6/bitstreams?name=aaaa_002_01.pdf"
+        )
+        bitstream_post_response_2 = {"uuid": "i9j0"}
+        mocked_request.post(bitstream_post_url_2, json=bitstream_post_response_2)
+
+        bitstream_post_url_3 = (
+            "mock://example.com/items/e5f6/bitstreams?name=bbbb_003_01.jpg"
+        )
+        bitstream_post_response_3 = {"uuid": "item_003_01_a"}
+        mocked_request.post(bitstream_post_url_3, json=bitstream_post_response_3)
+
+        bitstream_post_url_4 = (
+            "mock://example.com/items/e5f6/bitstreams?name=bbbb_003_01.pdf"
+        )
+        bitstream_post_response_4 = {"uuid": "item_003_01_b"}
+        mocked_request.post(bitstream_post_url_4, json=bitstream_post_response_4)
+
+        bitstream_post_url_5 = (
+            "mock://example.com/items/e5f6/bitstreams?name=bbbb_003_02.pdf"
+        )
+        bitstream_post_response_5 = {"uuid": "item_003_02_a"}
+        mocked_request.post(bitstream_post_url_5, json=bitstream_post_response_5)
+
+        bitstream_post_url_6 = (
+            "mock://example.com/items/e5f6/bitstreams?name=bbbb_004_01.pdf"
+        )
+        bitstream_post_response_6 = {"uuid": "item_004_01_a"}
+        mocked_request.post(bitstream_post_url_6, json=bitstream_post_response_6)
+
+        bitstream_post_url_7 = (
+            "mock://example.com/items/e5f6/bitstreams?name=include_005_01.pdf"
+        )
+        bitstream_post_response_7 = {"uuid": "item_005_01_a"}
+        mocked_request.post(bitstream_post_url_7, json=bitstream_post_response_7)
+        # mocked_request.get("mock://remoteserver.com/files/test_01.pdf", content=b"Sample")
+
+        yield mocked_request

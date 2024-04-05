@@ -1,0 +1,6 @@
+item_identifier,title,author,bitstreams
+001,Title 1,May Smith,['s3://mocked-bucket/one-to-one/aaaa_001_01.pdf']
+002,Title 2,May Smith,['s3://mocked-bucket/one-to-one/aaaa_002_01.pdf']
+003,Title 3,June Smith,"['s3://mocked-bucket/many-to-one/bbbb_003_01.jpg', 's3://mocked-bucket/many-to-one/bbbb_003_01.pdf', 's3://mocked-bucket/many-to-one/bbbb_003_02.pdf']"
+004,Title 4,June Smith,['s3://mocked-bucket/many-to-one/bbbb_004_01.pdf']
+005,Title 5,July Smith,['s3://mocked-bucket/nested/prefix/objects/include_005_01.pdf']

@@ -4,7 +4,7 @@ from dsaps.cli import main
 
 
 @mock_aws
-def test_additems(runner, mocked_s3):
+def test_additems(runner, mocked_s3_bucket, caplog):
     """Test adding items to a collection."""
     result = runner.invoke(
         main,
@@ -19,18 +19,15 @@ def test_additems(runner, mocked_s3):
             "1234",
             "additems",
             "--metadata-csv",
-            "tests/fixtures/aspace_metadata_delimited.csv",
-            "--field-map",
-            "config/aspace_mapping.json",
+            "tests/fixtures/updated-source_metadata.csv",
             "--content-directory",
-            "s3://test-bucket",
-            "--file-type",
-            "pdf",
+            "s3://mocked-bucket",
             "--collection-handle",
             "333.3333",
         ],
     )
     assert result.exit_code == 0
+
     result = runner.invoke(
         main,
         [
@@ -49,13 +46,9 @@ def test_additems(runner, mocked_s3):
             "Test Collection",
             "additems",
             "--metadata-csv",
-            "tests/fixtures/aspace_metadata_delimited.csv",
-            "--field-map",
-            "config/aspace_mapping.json",
+            "tests/fixtures/updated-source_metadata.csv",
             "--content-directory",
-            "s3://test-bucket",
-            "--file-type",
-            "pdf",
+            "s3://mocked-bucket",
         ],
     )
     assert result.exit_code == 0
@@ -85,7 +78,7 @@ def test_newcollection(runner):
 
 
 @mock_aws
-def test_reconcile(runner, mocked_s3, output_dir):
+def test_reconcile(runner, mocked_s3_bucket, output_dir):
     """Test reconcile command."""
     result = runner.invoke(
         main,
@@ -100,11 +93,11 @@ def test_reconcile(runner, mocked_s3, output_dir):
             "1234",
             "reconcile",
             "--metadata-csv",
-            "tests/fixtures/aspace_metadata_delimited.csv",
+            "tests/fixtures/source_metadata.csv",
             "--output-directory",
             output_dir,
             "--content-directory",
-            "s3://test-bucket",
+            "s3://mocked-bucket",
         ],
     )
     assert result.exit_code == 0

@@ -11,7 +11,7 @@ from dsaps.helpers import (
     parse_value_from_text,
     update_metadata_csv,
 )
-from dsaps.models import Item
+from dsaps import dspace
 
 REGEX_ID_BETWEEN_UNDERSCORES = "_(.*)_"
 REGEX_ID_BEFORE_UNDERSCORES = "(.*?)_"
@@ -20,8 +20,8 @@ REGEX_ID_DDC = ".*-(.*?-.[^_\\.]*)"
 
 def test_load_source_config():
     assert load_source_config("tests/fixtures/source_config.json")["settings"] == {
-        "bitstream_folders": ["objects"],
-        "id_regex": ".*-(.*?-.*)\\..*$",
+        "bitstream_folders": [],
+        "id_regex": "_(.*)_",
     }
 
 
@@ -61,10 +61,10 @@ def test_get_files_from_s3_one_file_per_file_id(mocked_s3_bucket, s3_client):
     )
     assert files == {
         "001": [
-            "one-to-one/aaaa_001_01.pdf",
+            "s3://mocked-bucket/one-to-one/aaaa_001_01.pdf",
         ],
         "002": [
-            "one-to-one/aaaa_002_01.pdf",
+            "s3://mocked-bucket/one-to-one/aaaa_002_01.pdf",
         ],
     }
 
@@ -77,11 +77,11 @@ def test_get_files_from_s3_many_files_per_file_id(mocked_s3_bucket, s3_client):
     )
     assert files == {
         "003": [
-            "many-to-one/bbbb_003_01.jpg",
-            "many-to-one/bbbb_003_01.pdf",
-            "many-to-one/bbbb_003_02.pdf",
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.jpg",
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.pdf",
+            "s3://mocked-bucket/many-to-one/bbbb_003_02.pdf",
         ],
-        "004": ["many-to-one/bbbb_004_01.pdf"],
+        "004": ["s3://mocked-bucket/many-to-one/bbbb_004_01.pdf"],
     }
 
 
@@ -92,7 +92,9 @@ def test_get_files_from_s3_with_bitstream_folders(mocked_s3_bucket, s3_client):
         bitstream_folders=["objects"],
         id_regex=REGEX_ID_BETWEEN_UNDERSCORES,
     )
-    assert files == {"005": ["nested/prefix/objects/include_005_01.pdf"]}
+    assert files == {
+        "005": ["s3://mocked-bucket/nested/prefix/objects/include_005_01.pdf"]
+    }
 
 
 def test_get_files_from_s3_without_bitstream_folders(mocked_s3_bucket, s3_client):
@@ -103,25 +105,25 @@ def test_get_files_from_s3_without_bitstream_folders(mocked_s3_bucket, s3_client
     )
     assert files == {
         "001": [
-            "one-to-one/aaaa_001_01.pdf",
+            "s3://mocked-bucket/one-to-one/aaaa_001_01.pdf",
         ],
         "002": [
-            "one-to-one/aaaa_002_01.pdf",
+            "s3://mocked-bucket/one-to-one/aaaa_002_01.pdf",
         ],
         "003": [
-            "many-to-one/bbbb_003_01.jpg",
-            "many-to-one/bbbb_003_01.pdf",
-            "many-to-one/bbbb_003_02.pdf",
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.jpg",
+            "s3://mocked-bucket/many-to-one/bbbb_003_01.pdf",
+            "s3://mocked-bucket/many-to-one/bbbb_003_02.pdf",
         ],
-        "004": ["many-to-one/bbbb_004_01.pdf"],
-        "005": ["nested/prefix/objects/include_005_01.pdf"],
+        "004": ["s3://mocked-bucket/many-to-one/bbbb_004_01.pdf"],
+        "005": ["s3://mocked-bucket/nested/prefix/objects/include_005_01.pdf"],
     }
 
 
 def test_create_ingest_report(runner, output_dir):
     """Test create_ingest_report function."""
     file_name = "ingest_report.csv"
-    items = [Item(source_system_identifier="/repo/0/ao/123", handle="111.1111")]
+    items = [dspace.Item(source_system_identifier="/repo/0/ao/123", handle="111.1111")]
     create_ingest_report(items, f"{output_dir}{file_name}")
     with open(f"{output_dir}{file_name}") as csvfile:
         reader = csv.DictReader(csvfile)
@@ -132,10 +134,9 @@ def test_create_ingest_report(runner, output_dir):
 
 def test_create_metadata_id_list():
     """Test create_metadata_id_list function."""
-    metadata_path = "tests/fixtures/aspace_metadata_delimited.csv"
+    metadata_path = "tests/fixtures/source_metadata.csv"
     metadata_ids = create_metadata_id_list(metadata_path)
-    assert "test" in metadata_ids
-    assert "tast" in metadata_ids
+    assert metadata_ids == ["001", "002", "003", "004", "005"]
 
 
 def test_match_files_to_metadata():
@@ -156,19 +157,24 @@ def test_match_metadata_to_files():
     assert "test" in file_matches
 
 
-def test_update_metadata_csv(output_dir):
+def test_update_metadata_csv(
+    output_dir, mocked_s3_bucket_bitstreams, source_metadata_csv_with_bitstreams
+):
     """Test update_metadata_csv function."""
-    metadata_matches = ["test"]
+    updated_records = []
+    expected_records = []
     update_metadata_csv(
-        "tests/fixtures/aspace_metadata_delimited.csv",
-        output_dir,
-        metadata_matches,
-        {"test": ["/test/test_01.pdf"]},
+        metadata_csv="tests/fixtures/source_metadata.csv",
+        output_directory=output_dir,
+        metadata_matches=["001", "002", "003", "004", "005"],
+        files_dict=mocked_s3_bucket_bitstreams,
     )
-    with open(f"{output_dir}updated-aspace_metadata_delimited.csv") as csvfile:
+    with open(f"{output_dir}/updated-source_metadata.csv") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            assert row["uri"] == "/repo/0/ao/123"
-            assert row["title"] == "Test Item"
-            assert row["file_identifier"] == "test"
-            assert row["bitstreams"] == "['/test/test_01.pdf']"
+            updated_records.append(row)
+
+    for row in source_metadata_csv_with_bitstreams:
+        expected_records.append(row)
+
+    assert updated_records == expected_records

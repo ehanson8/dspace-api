@@ -1,15 +1,17 @@
 import csv
 import datetime
-import json
 import logging
 import os
-import time
+
+from datetime import timedelta
+from time import perf_counter
 
 import click
 import structlog
 
-from dsaps import helpers
-from dsaps.models import Client, Collection
+from dsaps import dspace, helpers
+from dsaps.s3 import S3Client
+
 
 logger = structlog.get_logger()
 
@@ -24,19 +26,22 @@ def validate_path(ctx, param, value):
 
 @click.group(chain=True)
 @click.option(
-    "--config-file", required=True, help="File path to source configuration JSON."
+    "--config-file",
+    envvar="CONFIG_FILE",
+    required=True,
+    help="File path to source configuration JSON with settings for bitstream retrieval and field mappings.",
 )
 @click.option(
     "--url",
     envvar="DSPACE_URL",
-    required=True,
+    required=False,
     help="The url for the DSpace REST API. Defaults to env var DSPACE_URL if not set.",
 )
 @click.option(
     "-e",
     "--email",
     envvar="DSPACE_EMAIL",
-    required=True,
+    required=False,
     help=(
         "The email associated with the DSpace user account used for authentication. "
         "Defaults to env var DSPACE_EMAIL if not set."
@@ -46,7 +51,7 @@ def validate_path(ctx, param, value):
     "-p",
     "--password",
     envvar="DSPACE_PASSWORD",
-    required=True,
+    required=False,
     hide_input=True,
     help=(
         "The password associated with the DSpace user account used for authentication. "
@@ -76,14 +81,16 @@ def main(ctx, config_file, url, email, password):
         handlers=[logging.FileHandler(f"logs/log-{log_suffix}", "w")],
         level=logging.INFO,
     )
-    logger.info("Application start")
-    client = Client(url)
-    client.authenticate(email, password)
-    start_time = time.time()
-    ctx.obj["config"] = helpers.load_source_config(config_file)
-    ctx.obj["client"] = client
-    ctx.obj["start_time"] = start_time
-    ctx.obj["log_suffix"] = log_suffix
+    logger.info("Running process")
+    source_config = helpers.load_source_config(config_file)
+    if url:
+        dspace_client = dspace.DSpaceClient(url)
+        dspace_client.authenticate(email, password)
+        ctx.obj["dspace_client"] = dspace_client
+    ctx.obj["source_config"] = source_config
+    logger.info("Initializing S3 client")
+    ctx.obj["s3_client"] = S3Client.get_client()
+    ctx.obj["start_time"] = perf_counter()
 
 
 @main.command()
@@ -92,26 +99,13 @@ def main(ctx, config_file, url, email, password):
     "--metadata-csv",
     required=True,
     type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help="The filepath to a CSV file containing metadata for Dspace uploads.",
-)
-@click.option(
-    "-f",
-    "--field-map",
-    required=True,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help="The filepath to a JSON document that maps columns in the metadata CSV file to a DSpace schema.",
+    help="File path to a CSV file describing the metadata and bitstreams for DSpace uploads.",
 )
 @click.option(
     "-d",
     "--content-directory",
     required=True,
     help="The name of the S3 bucket containing files for DSpace uploads.",
-)
-@click.option(
-    "-t",
-    "--file-type",
-    help="The file type for DSpace uploads (i.e., the file extension, excluding the dot).",
-    default="*",
 )
 @click.option(
     "-r",
@@ -129,40 +123,55 @@ def main(ctx, config_file, url, email, password):
 def additems(
     ctx,
     metadata_csv,
-    field_map,
     content_directory,
-    file_type,
     ingest_report,
     collection_handle,
 ):
     """Add items to a DSpace collection.
 
-    The method relies on a CSV file with metadata for uploads, a JSON document that maps
-    metadata to a DSpace schema, and a directory containing the files to be uploaded.
+    The updated metadata CSV file from running 'reconcile' is used for this process.
+    The method will first add an item to the specified DSpace collection. The bitstreams
+    (i.e., files) associated with the item are read from the metadata CSV file, and
+    uploaded to the newly created item on DSpace.
     """
-    client = ctx.obj["client"]
-    start_time = ctx.obj["start_time"]
+    mapping = ctx.obj["source_config"]["mapping"]
+    dspace_client = ctx.obj["dspace_client"]
+
     if "collection_uuid" not in ctx.obj and collection_handle is None:
         raise click.UsageError(
-            "collection_handle option must be used or "
-            "additems must be run after newcollection "
-            "command."
+            "Option '--collection-handle' must be used or "
+            "run 'additems' after 'newcollection' command."
         )
     elif "collection_uuid" in ctx.obj:
         collection_uuid = ctx.obj["collection_uuid"]
     else:
-        collection_uuid = client.get_uuid_from_handle(collection_handle)
-    with open(metadata_csv, "r") as csvfile, open(field_map, "r") as jsonfile:
+        collection_uuid = dspace_client.get_uuid_from_handle(collection_handle)
+
+    if metadata_csv is None:
+        raise click.UsageError("Option '--metadata-csv' must be used.")
+
+    dspace_collection = dspace.Collection(uuid=collection_uuid)
+
+    with open(metadata_csv, "r") as csvfile:
         metadata = csv.DictReader(csvfile)
-        mapping = json.load(jsonfile)
-        collection = Collection.create_metadata_for_items_from_csv(metadata, mapping)
-    for item in collection.items:
-        item.bitstreams_in_directory(content_directory, client.s3_client, file_type)
-    collection.uuid = collection_uuid
-    for item in collection.post_items(client):
-        logger.info(item.file_identifier)
-    elapsed_time = datetime.timedelta(seconds=time.time() - start_time)
-    logger.info(f"Total runtime : {elapsed_time}")
+        dspace_collection = dspace_collection.add_items(metadata, mapping)
+
+    for item in dspace_collection.items:
+        logger.info(f"Posting item: {item}")
+        item_uuid, item_handle = dspace_client.post_item_to_collection(
+            collection_uuid, item
+        )
+        item.uuid = item_uuid
+        item.handle = item_handle
+        logger.info(f"Item posted: {item_uuid}")
+        for bitstream in item.bitstreams:
+            logger.info(f"Posting bitstream: {bitstream}")
+            dspace_client.post_bitstream(item.uuid, bitstream)
+
+    logger.info(
+        "Total elapsed: %s",
+        str(timedelta(seconds=perf_counter() - ctx.obj["start_time"])),
+    )
 
 
 @main.command()
@@ -181,8 +190,10 @@ def additems(
 @click.pass_context
 def newcollection(ctx, community_handle, collection_name):
     """Create a new DSpace collection within a community."""
-    client = ctx.obj["client"]
-    collection_uuid = client.post_coll_to_comm(community_handle, collection_name)
+    dspace_client = ctx.obj["dspace_client"]
+    collection_uuid = dspace_client.post_collection_to_community(
+        community_handle, collection_name
+    )
     ctx.obj["collection_uuid"] = collection_uuid
 
 
@@ -225,22 +236,21 @@ def reconcile(ctx, metadata_csv, output_directory, content_directory):
         * updated-<metadata-csv>.csv: Entries from the metadata CSV file with a
         corresponding file in the content directory.
     """
-    source_settings = ctx.obj["config"]["settings"]
-    client = ctx.obj["client"]
-    files_dict = helpers.get_files_from_s3(
+    source_settings = ctx.obj["source_config"]["settings"]
+    bitstreams = helpers.get_files_from_s3(
         s3_path=content_directory,
-        s3_client=client.s3_client,
+        s3_client=ctx.obj["s3_client"],
         bitstream_folders=source_settings.get("bitstream_folders"),
         id_regex=source_settings["id_regex"],
     )
     metadata_ids = helpers.create_metadata_id_list(metadata_csv)
-    metadata_matches = helpers.match_metadata_to_files(files_dict.keys(), metadata_ids)
-    file_matches = helpers.match_files_to_metadata(files_dict.keys(), metadata_ids)
+    metadata_matches = helpers.match_metadata_to_files(bitstreams.keys(), metadata_ids)
+    file_matches = helpers.match_files_to_metadata(bitstreams.keys(), metadata_ids)
     no_files = set(metadata_ids) - set(metadata_matches)
-    no_metadata = set(files_dict.keys()) - set(file_matches)
+    no_metadata = set(bitstreams.keys()) - set(file_matches)
     helpers.create_csv_from_list(no_metadata, f"{output_directory}no_metadata")
     helpers.create_csv_from_list(no_files, f"{output_directory}no_files")
     helpers.create_csv_from_list(metadata_matches, f"{output_directory}metadata_matches")
     helpers.update_metadata_csv(
-        metadata_csv, output_directory, metadata_matches, files_dict
+        metadata_csv, output_directory, metadata_matches, bitstreams
     )

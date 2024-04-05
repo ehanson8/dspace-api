@@ -3,7 +3,7 @@
         "bitstream_folders": [
             "objects"
         ],
-        "id_regex": ".*-(.*?-.*)\\..*$"
+        "id_regex": ".*-(\\d*?-\\d*).*$"
     },
     "mapping": {
         "item_identifier": {
