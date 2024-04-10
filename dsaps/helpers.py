@@ -66,6 +66,10 @@ def get_files_from_s3(
                     continue
             item_identifier = parse_value_from_text(file_name, id_regex)
             files.setdefault(item_identifier, []).append(file_path)
+    for key, value in files.items():
+        files[key] = sorted(
+            value, key=lambda x: x.split(parse_value_from_text(x, id_regex))[1]
+        )
     return dict(sorted(files.items()))
 
 
@@ -74,8 +78,8 @@ def parse_value_from_text(
     regex: str,
 ):
     pattern = re.compile(regex)
-    if match := pattern.search(text):
-        return match.group(1)
+    if matches := pattern.findall(text):
+        return matches[0]
 
 
 def create_ingest_report(items, file_name):
