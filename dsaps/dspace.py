@@ -28,7 +28,7 @@ class DSpaceClient:
         header = self.header
         data = {"email": email, "password": password}
         session = requests.post(
-            f"{self.url}/login", headers=header, params=data, timeout=30
+            f"{self.url}/login", headers=header, params=data, timeout=120
         ).cookies["JSESSIONID"]
         cookies = {"JSESSIONID": session}
         status = requests.get(
@@ -107,7 +107,7 @@ class DSpaceClient:
                 headers=header_upload,
                 cookies=self.cookies,
                 data=data,
-                timeout=30,
+                timeout=120,
             )
             logger.info(f"Bitstream POST status: {post_response}")
             response = post_response.json()
@@ -128,7 +128,7 @@ class DSpaceClient:
             headers=self.header,
             cookies=self.cookies,
             json={"name": coll_name},
-            timeout=30,
+            timeout=120,
         ).json()
         coll_uuid = coll_uuid["uuid"]
         logger.info(f"Collection posted: {coll_uuid}")
@@ -143,7 +143,7 @@ class DSpaceClient:
             headers=self.header,
             cookies=self.cookies,
             json={"metadata": attr.asdict(item)["metadata"]},
-            timeout=30,
+            timeout=120,
         )
         logger.info(f"Item POST status: {post_resp}")
         post_response = post_resp.json()

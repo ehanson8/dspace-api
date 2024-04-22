@@ -1,0 +1,83 @@
+{
+    "settings": {
+        "bitstream_folders": [],
+        "id_regex": "^.*$"
+    },
+    "mapping": {
+        "item_identifier": {
+            "csv_field_name": "item_identifier",
+            "language": null,
+            "delimiter": ""
+        },
+        "dc.publisher": {
+            "csv_field_name": "dc.publisher",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.identifier.mitlicense": {
+            "csv_field_name": "dc.identifier.mitlicense",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.eprint.version": {
+            "csv_field_name": "dc.eprint.version",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.type": {
+            "csv_field_name": "dc.type",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.source": {
+            "csv_field_name": "dc.source",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.contributor.author": {
+            "csv_field_name": "dc.contributor.author",
+            "language": "en_US",
+            "delimiter": "|"
+        },
+        "dc.relation.isversionof": {
+            "csv_field_name": "dc.relation.isversionof",
+            "language": "",
+            "delimiter": ""
+        },
+        "dc.title": {
+            "csv_field_name": "dc.title",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.relation.journal": {
+            "csv_field_name": "dc.relation.journal",
+            "language": "",
+            "delimiter": ""
+        },
+        "dc.identifier.issn": {
+            "csv_field_name": "dc.identifier.issn",
+            "language": "",
+            "delimiter": ""
+        },
+        "dc.date.issued": {
+            "csv_field_name": "dc.date.issued",
+            "language": "",
+            "delimiter": ""
+        },
+        "dc.rights": {
+            "csv_field_name": "dc.rights",
+            "language": "en_US",
+            "delimiter": ""
+        },
+        "dc.rights.uri": {
+            "csv_field_name": "dc.rights.uri",
+            "language": "",
+            "delimiter": ""
+        },
+        "dc.description.sponsorship": {
+            "csv_field_name": "dc.description.sponsorship",
+            "language": "en_US",
+            "delimiter": ""
+        }
+    }
+}
